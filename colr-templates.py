@@ -83,14 +83,16 @@ def serializeObjectTuple(objTuple, layerList, layerListCache):
         paint.Format = 1  # PaintColrLayers
         cached = layerListCache.get(objTuple)
         if cached is not None:
-            return copy.deepcopy(cached)
+            paint.FirstLayerIndex = cached
+            paint.NumLayers = len(objTuple) - 1
+            return paint
 
         layers = [serializeObjectTuple(layer, layerList, layerListCache) for layer in objTuple[1:]]
         firstLayerIndex = paint.FirstLayerIndex = len(layerList)
         paint.NumLayers = len(objTuple) - 1
         layerList.extend(layers)
 
-        layerListCache[objTuple] = paint
+        layerListCache[objTuple] = firstLayerIndex
         # Build cache entries for all sublists as well
         for i in range(1, len(objTuple) - 2):
             for j in range(i + 2, len(objTuple)):
@@ -100,11 +102,7 @@ def serializeObjectTuple(objTuple, layerList, layerListCache):
                 #if sliceTuple in layerListCache:
                 #    continue
 
-                p = Paint()
-                p.Format = 1  # PaintColrLayers
-                p.FirstLayerIndex = firstLayerIndex + i - 1
-                p.NumLayers = j - i
-                layerListCache[sliceTuple] = p
+                layerListCache[sliceTuple] = firstLayerIndex + i - 1
 
         return paint
 
