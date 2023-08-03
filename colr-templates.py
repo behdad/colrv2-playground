@@ -74,7 +74,7 @@ def templateIsAllArguments(template):
     return (template[0] == 'PaintColrLayers' and
             all(templateIsAllArguments(o) for o in template[1:]))
 
-def serializeObjectTuple(objTuple, layerList, layerListCache):
+def serializeObjectTuple(objTuple):
     if not isinstance(objTuple, tuple):
         return objTuple
 
@@ -84,36 +84,65 @@ def serializeObjectTuple(objTuple, layerList, layerListCache):
         paint.NumLayers = len(objTuple) - 1
 
         layersTuple = objTuple[1:]
-        cached = layerListCache.get(layersTuple)
-        if cached is not None:
-            paint.FirstLayerIndex = cached
-            return paint
 
-        layers = [serializeObjectTuple(layer, layerList, layerListCache) for layer in layersTuple]
-        firstLayerIndex = paint.FirstLayerIndex = len(layerList)
-        layerList.extend(layers)
-
-        layerListCache[layersTuple] = firstLayerIndex
-        # Build cache entries for all sublists as well
-        for i in range(0, len(layersTuple) - 2):
-            for j in range(i + 2, len(layersTuple)):
-                sliceTuple = layersTuple[i:j]
-
-                # The following slows things down and has no effect on the result
-                #if sliceTuple in layerListCache:
-                #    continue
-
-                layerListCache[sliceTuple] = firstLayerIndex + i
+        layers = [serializeObjectTuple(layer) for layer in layersTuple]
+        paint.layers = layers
+        paint.layersTuple = layersTuple
 
         return paint
 
     if objTuple[0] == 'list':
-        return [serializeObjectTuple(o, layerList, layerListCache) for o in objTuple[1:]]
+        return [serializeObjectTuple(o) for o in objTuple[1:]]
 
     obj = getattr(otTables, objTuple[0])()
     for attr, value in objTuple[1:]:
-        setattr(obj, attr, serializeObjectTuple(value, layerList, layerListCache))
+        setattr(obj, attr, serializeObjectTuple(value))
     return obj
+
+def collectPaintColrLayers(paint, allPaintColrLayers):
+    if not isinstance(paint, Paint):
+        return
+    if hasattr(paint, 'layers'):
+        allPaintColrLayers.append(paint)
+        for layer in paint.layers:
+            collectPaintColrLayers(layer, allPaintColrLayers)
+        return
+
+    for value in paint.__dict__.values():
+        collectPaintColrLayers(value, allPaintColrLayers)
+
+def serializeLayers(glyphList, layerList):
+    allPaintColrLayers = []
+    for glyph in glyphList:
+        collectPaintColrLayers(glyph.Paint, allPaintColrLayers)
+
+    allPaintColrLayers = sorted(allPaintColrLayers, key=lambda p: len(p.layers), reverse=True)
+
+    layerListCache = {}
+    for paint in allPaintColrLayers:
+        cached = layerListCache.get(paint.layersTuple)
+        if cached is not None:
+            paint.FirstLayerIndex = cached
+        else:
+            assert len(paint.layers) > 1, paint.layersTuple
+            firstLayerIndex = paint.FirstLayerIndex = len(layerList)
+            layerList.extend(paint.layers)
+
+            layersTuple = paint.layersTuple
+            layerListCache[layersTuple] = firstLayerIndex
+            # Build cache entries for all sublists as well
+            for i in range(0, len(layersTuple) - 2):
+                for j in range(i + 2, len(layersTuple)):
+                    sliceTuple = layersTuple[i:j]
+
+                    # The following slows things down and has no effect on the result
+                    #if sliceTuple in layerListCache:
+                    #    continue
+
+                    layerListCache[sliceTuple] = firstLayerIndex + i
+
+        del paint.layers
+        del paint.layersTuple
 
 
 font = TTFont("NotoColorEmoji-Regular.ttf")
@@ -143,12 +172,13 @@ font.save("NotoColorEmoji-Regular-original.ttf")
 print("Rebuilding original font.")
 colr2 = colr  # copy.deepcopy(colr)
 newGlyphList = colr2.BaseGlyphList.BaseGlyphPaintRecord
-newLayerList = colr2.LayerList.Paint = []
-layerListCache = {}
-for glyph in sorted(newGlyphList, key=lambda g: len(paintTuples[g.BaseGlyph]), reverse=True):
+for glyph in newGlyphList:
     glyphName = glyph.BaseGlyph
-    paint = serializeObjectTuple(paintTuples[glyphName], newLayerList, layerListCache)
-    glyph.Paint = paint
+    glyph.Paint = serializeObjectTuple(paintTuples[glyphName])
+
+newLayerList = colr2.LayerList.Paint = []
+serializeLayers(glyphList, newLayerList)
+
 print(len(newGlyphList), "root paints")
 print(len(newLayerList), "layer paints")
 
