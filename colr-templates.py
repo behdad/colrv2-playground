@@ -1,7 +1,7 @@
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables.otBase import OTTableWriter
-from fontTools.ttLib.tables import otTables
-from fontTools.ttLib.tables.otTables import Paint
+from fontTools.ttLib.tables import otTables as ot
+from fontTools.ttLib.tables.otTables import Paint, PaintFormat
 from collections import defaultdict
 from pprint import pprint
 import copy
@@ -14,24 +14,35 @@ def objectToTuple(obj, layerList):
 
     name = type(obj).__name__
 
-    if type(obj) == Paint and obj.Format == 1:  # PaintColrLayers:
-        obj = [p for p in layerList[obj.FirstLayerIndex:obj.FirstLayerIndex+obj.NumLayers]]
+    if type(obj) == Paint and obj.Format == PaintFormat.PaintColrLayers:
+        obj = [
+            p
+            for p in layerList[
+                obj.FirstLayerIndex : obj.FirstLayerIndex + obj.NumLayers
+            ]
+        ]
         name = "PaintColrLayers"
 
     if isinstance(obj, (list, tuple)):
         return (name,) + tuple(objectToTuple(o, layerList) for o in obj)
 
-    return (name,) + tuple((attr, objectToTuple(getattr(obj, attr), layerList)) for attr in sorted(obj.__dict__.keys()))
+    return (name,) + tuple(
+        (attr, objectToTuple(getattr(obj, attr), layerList))
+        for attr in sorted(obj.__dict__.keys())
+    )
 
 
 def templateForObjectTuple(objTuple):
     if not isinstance(objTuple, tuple):
         return objTuple
 
-    if objTuple[0] == 'Paint':
-        if all(not isinstance(o[1], tuple) or o[1][0] not in ('Paint', 'PaintColrLayers') for o in objTuple[1:]):
+    if objTuple[0] == "Paint":
+        if all(
+            not isinstance(o[1], tuple) or o[1][0] not in ("Paint", "PaintColrLayers")
+            for o in objTuple[1:]
+        ):
             # Leaf paint. Replace with variable.
-            return ('PaintTemplateArgument',)
+            return ("PaintTemplateArgument",)
 
     return tuple(templateForObjectTuple(o) for o in objTuple)
 
@@ -63,27 +74,34 @@ def templateForObjectTuples(allTuples, arguments):
     if ret is not None:
         return ret
 
-    if v0[0] == 'Paint':
-        paint = ('Paint', ("Format", 33), ("ArgumentIndex", len(arguments)))
+    if v0[0] == "Paint":
+        paint = (
+            "Paint",
+            ("Format", PaintFormat.PaintTemplateArgument),
+            ("ArgumentIndex", len(arguments)),
+        )
         arguments.append(allTuples)
 
         return paint
 
     return None
 
+
 def templateIsAllArguments(template):
-    if template[0] == 'PaintTemplateArgument':
+    if template[0] == "PaintTemplateArgument":
         return True
-    return (template[0] == 'PaintColrLayers' and
-            all(templateIsAllArguments(o) for o in template[1:]))
+    return template[0] == "PaintColrLayers" and all(
+        templateIsAllArguments(o) for o in template[1:]
+    )
+
 
 def serializeObjectTuple(objTuple):
     if not isinstance(objTuple, tuple):
         return objTuple
 
-    if objTuple[0] == 'PaintColrLayers':
+    if objTuple[0] == "PaintColrLayers":
         paint = Paint()
-        paint.Format = 1  # PaintColrLayers
+        paint.Format = PaintFormat.PaintColrLayers
         paint.NumLayers = len(objTuple) - 1
 
         layersTuple = objTuple[1:]
@@ -94,18 +112,19 @@ def serializeObjectTuple(objTuple):
 
         return paint
 
-    if objTuple[0] == 'list':
+    if objTuple[0] == "list":
         return [serializeObjectTuple(o) for o in objTuple[1:]]
 
-    obj = getattr(otTables, objTuple[0])()
+    obj = getattr(ot, objTuple[0])()
     for attr, value in objTuple[1:]:
         setattr(obj, attr, serializeObjectTuple(value))
     return obj
 
+
 def collectPaintColrLayers(paint, allPaintColrLayers):
     if not isinstance(paint, Paint):
         return
-    if hasattr(paint, 'layers'):
+    if hasattr(paint, "layers"):
         allPaintColrLayers.append(paint)
         for layer in paint.layers:
             collectPaintColrLayers(layer, allPaintColrLayers)
@@ -114,12 +133,15 @@ def collectPaintColrLayers(paint, allPaintColrLayers):
     for value in paint.__dict__.values():
         collectPaintColrLayers(value, allPaintColrLayers)
 
+
 def serializeLayers(glyphList, layerList):
     allPaintColrLayers = []
     for glyph in glyphList:
         collectPaintColrLayers(glyph.Paint, allPaintColrLayers)
 
-    allPaintColrLayers = sorted(allPaintColrLayers, key=lambda p: (len(p.layers),p.layersTuple), reverse=True)
+    allPaintColrLayers = sorted(
+        allPaintColrLayers, key=lambda p: (len(p.layers), p.layersTuple), reverse=True
+    )
 
     layerListCache = {}
     for paint in allPaintColrLayers:
@@ -140,7 +162,7 @@ def serializeLayers(glyphList, layerList):
                     sliceTuple = layersTuple[i:j]
 
                     # The following slows things down and has no effect on the result
-                    #if sliceTuple in layerListCache:
+                    # if sliceTuple in layerListCache:
                     #    continue
 
                     layerListCache[sliceTuple] = firstLayerIndex + i
@@ -159,7 +181,7 @@ def rebuildColr(font, paintTuples):
     layerList = colr.LayerList.Paint = []
     serializeLayers(glyphList, layerList)
 
-    print(len(glyphList), "root paints")
+    print(len(glyphList), "glyph paints")
     print(len(layerList), "layer paints")
 
     font["COLR"].table = colr
@@ -177,7 +199,7 @@ colr = font["COLR"].table
 
 glyphList = colr.BaseGlyphList.BaseGlyphPaintRecord
 layerList = colr.LayerList.Paint
-print(len(glyphList), "root paints")
+print(len(glyphList), "glyph paints")
 print(len(layerList), "layer paints")
 
 paintTuples = {}
@@ -196,8 +218,8 @@ if True:
     data = writer.getAllData()
     originalSize = len(data)
     print("Original COLR table is", originalSize, "bytes")
-    #print("Saving NotoColorEmoji-Regular-original.ttf")
-    #font.save("NotoColorEmoji-Regular-original.ttf")
+    # print("Saving NotoColorEmoji-Regular-original.ttf")
+    # font.save("NotoColorEmoji-Regular-original.ttf")
 
 
 if False:
@@ -214,27 +236,30 @@ for glyphName, paintTuple in paintTuples.items():
     if templateIsAllArguments(paintTemplate):
         continue
     genericTemplates[paintTemplate].append(glyphName)
-genericTemplates = {k:v for k,v in genericTemplates.items() if len(v) > 1}
-print(len(genericTemplates), "unique general templates")
-#pprint([(len(v), v, k) for k,v in sorted(genericTemplates.items(), key=lambda x: len(x[1]))])
+genericTemplates = {k: v for k, v in genericTemplates.items() if len(v) > 1}
+print(
+    "%d unique templates for %d glyphs"
+    % (len(genericTemplates), sum(len(v) for v in genericTemplates.values()))
+)
+# pprint([(len(v), v, k) for k,v in sorted(genericTemplates.items(), key=lambda x: len(x[1]))])
 
 specializedTemplates = {}
-for template,templateGlyphs in genericTemplates.items():
+for template, templateGlyphs in genericTemplates.items():
     allTuples = [paintTuples[g] for g in templateGlyphs]
     arguments = []
     specializedTemplate = templateForObjectTuples(allTuples, arguments)
     specializedTemplates[specializedTemplate] = (templateGlyphs, arguments)
-print(len(specializedTemplates), "unique specialized templates")
-#pprint([(len(v), v, k) for k,v in sorted(specializedTemplates.items(), key=lambda x: len(x[0][1]))])
+# pprint([(len(v), v, k) for k,v in sorted(specializedTemplates.items(), key=lambda x: len(x[0][1]))])
 
 for template, (templateGlyphs, arguments) in specializedTemplates.items():
     for i, glyphName in enumerate(templateGlyphs):
-        paintTuple = ("Paint",
-                        ("Format", 34),
-                        ("TemplatePaint", template),
-                        ("NumArguments", len(arguments)),
-                        ("Arguments", ("list",) + tuple(args[i] for args in arguments)),
-                     )
+        paintTuple = (
+            "Paint",
+            ("Format", PaintFormat.PaintTemplateInstance),
+            ("TemplatePaint", template),
+            ("NumArguments", len(arguments)),
+            ("Arguments", ("list",) + tuple(args[i] for args in arguments)),
+        )
         paintTuples[glyphName] = paintTuple
 
 print("Building templatized font")
@@ -244,4 +269,7 @@ print("Saving NotoColorEmoji-Regular-templatized.ttf")
 font.save("NotoColorEmoji-Regular-templatized.ttf")
 
 if originalSize is not None:
-    print("Templatized COLR table is %.3g%% smaller." % (100 * (1 - templatizedSize / originalSize)))
+    print(
+        "Templatized COLR table is %.3g%% smaller."
+        % (100 * (1 - templatizedSize / originalSize))
+    )
