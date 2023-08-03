@@ -36,7 +36,7 @@ def templateForObjectTuple(objTuple):
     return tuple(templateForObjectTuple(o) for o in objTuple)
 
 
-def templateForObjectTuples(allTuples):
+def templateForObjectTuples(allTuples, arguments):
     assert isinstance(allTuples, (list, tuple))
     v0 = allTuples[0]
     t0 = type(v0)
@@ -56,15 +56,18 @@ def templateForObjectTuples(allTuples):
     if any(len(v) != l0 for v in allTuples):
         return None
 
-    ret = tuple(templateForObjectTuples(l) for l in zip(*allTuples))
+    ret = tuple(templateForObjectTuples(l, arguments) for l in zip(*allTuples))
     if ret is not None and None in ret:
         ret = None
 
-    if ret:
+    if ret is not None:
         return ret
 
     if v0[0] == 'Paint':
-        return ('PaintTemplateArgument',)
+        paint = ('Paint', ("Format", 33), ("ArgumentIndex", len(arguments)))
+        arguments.append(allTuples)
+
+        return paint
 
     return None
 
@@ -146,6 +149,27 @@ def serializeLayers(glyphList, layerList):
         del paint.layersTuple
 
 
+def rebuildColr(font, paintTuples):
+    colr = font["COLR"].table
+    glyphList = colr.BaseGlyphList.BaseGlyphPaintRecord
+    for glyph in glyphList:
+        glyphName = glyph.BaseGlyph
+        glyph.Paint = serializeObjectTuple(paintTuples[glyphName])
+
+    layerList = colr.LayerList.Paint = []
+    serializeLayers(glyphList, layerList)
+
+    print(len(glyphList), "root paints")
+    print(len(layerList), "layer paints")
+
+    font["COLR"].table = colr
+
+    writer = OTTableWriter()
+    colr.compile(writer, font)
+    data2 = writer.getAllData()
+    print("Reconstructed COLR table is", len(data2), "bytes")
+
+
 font = TTFont("NotoColorEmoji-Regular.ttf")
 colr = font["COLR"].table
 
@@ -163,38 +187,21 @@ for glyph in glyphList:
     paintTuples[glyphName] = paintTuple
 
 
-if False:
+if True:
     writer = OTTableWriter()
     colr.compile(writer, font)
     data = writer.getAllData()
     print("Original COLR table is", len(data), "bytes")
-    print("Saving NotoColorEmoji-Regular-original.ttf")
-    font.save("NotoColorEmoji-Regular-original.ttf")
+    #print("Saving NotoColorEmoji-Regular-original.ttf")
+    #font.save("NotoColorEmoji-Regular-original.ttf")
 
 
 if False:
     print("Rebuilding original font.")
-    colr2 = colr  # copy.deepcopy(colr)
-    newGlyphList = colr2.BaseGlyphList.BaseGlyphPaintRecord
-    for glyph in newGlyphList:
-        glyphName = glyph.BaseGlyph
-        glyph.Paint = serializeObjectTuple(paintTuples[glyphName])
+    rebuildColr(font, paintTuples)
 
-    newLayerList = colr2.LayerList.Paint = []
-    serializeLayers(glyphList, newLayerList)
-
-    print(len(newGlyphList), "root paints")
-    print(len(newLayerList), "layer paints")
-
-    writer = OTTableWriter()
-    colr2.compile(writer, font)
-    data2 = writer.getAllData()
-    print("Reconstructed COLR table is", len(data2), "bytes")
-
-    font["COLR"].table = colr2
     print("Saving NotoColorEmoji-Regular-reconstructed.ttf")
     font.save("NotoColorEmoji-Regular-reconstructed.ttf")
-
 
 
 genericTemplates = defaultdict(list)
@@ -204,16 +211,30 @@ for glyphName, paintTuple in paintTuples.items():
         continue
     genericTemplates[paintTemplate].append(glyphName)
 genericTemplates = {k:v for k,v in genericTemplates.items() if len(v) > 1}
-
 print(len(genericTemplates), "unique general templates")
 #pprint([(len(v), v, k) for k,v in sorted(genericTemplates.items(), key=lambda x: len(x[1]))])
 
 specializedTemplates = {}
 for template,templateGlyphs in genericTemplates.items():
     allTuples = [paintTuples[g] for g in templateGlyphs]
-    specializedTemplate = templateForObjectTuples(allTuples)
-    specializedTemplates[specializedTemplate] = templateGlyphs
-
+    arguments = []
+    specializedTemplate = templateForObjectTuples(allTuples, arguments)
+    specializedTemplates[specializedTemplate] = (templateGlyphs, arguments)
 print(len(specializedTemplates), "unique specialized templates")
-#pprint([(len(v), v, k) for k,v in sorted(specializedTemplates.items(), key=lambda x: len(x[1]))])
+#pprint([(len(v), v, k) for k,v in sorted(specializedTemplates.items(), key=lambda x: len(x[0][1]))])
 
+for template, (templateGlyphs, arguments) in specializedTemplates.items():
+    for i, glyphName in enumerate(templateGlyphs):
+        paintTuple = ("Paint",
+                        ("Format", 34),
+                        ("TemplatePaint", template),
+                        ("NumArguments", len(arguments)),
+                        ("Arguments", ("list",) + tuple(args[i] for args in arguments)),
+                     )
+        paintTuples[glyphName] = paintTuple
+
+print("Building templatized font.")
+rebuildColr(font, paintTuples)
+
+print("Saving NotoColorEmoji-Regular-templatized.ttf")
+font.save("NotoColorEmoji-Regular-templatized.ttf")
