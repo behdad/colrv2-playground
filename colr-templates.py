@@ -8,6 +8,31 @@ import copy
 import sys
 
 
+class cachedtuple(tuple):
+
+    _hash = None
+
+    def __new__(cls, *args):
+        return super(cachedtuple, cls).__new__(cls, *args)
+
+    def __hash__(self):
+        if self._hash is None:
+            self._hash = hash(tuple(self))
+        return self._hash
+
+    def __eq__(self, other):
+        if not isinstance(other, tuple):
+            return False
+        if hash(self) != hash(other):
+            return False
+        return tuple(self) == tuple(other)
+
+    def __add__(self, other):
+        return cachedtuple(tuple(self) + tuple(other))
+
+    def __iadd__(self, other):
+        return cachedtuple(tuple(other) + tuple(self))
+
 def objectToTuple(obj, layerList):
     if isinstance(obj, (int, float, str)):
         return obj
@@ -19,9 +44,9 @@ def objectToTuple(obj, layerList):
         name = "PaintColrLayers"
 
     if isinstance(obj, (list, tuple)):
-        return (name,) + tuple(objectToTuple(o, layerList) for o in obj)
+        return cachedtuple((name,)) + cachedtuple(objectToTuple(o, layerList) for o in obj)
 
-    return (name,) + tuple((attr, objectToTuple(getattr(obj, attr), layerList)) for attr in sorted(obj.__dict__.keys()))
+    return cachedtuple((name,)) + cachedtuple((attr, objectToTuple(getattr(obj, attr), layerList)) for attr in sorted(obj.__dict__.keys()))
 
 
 def templateForObjectTuple(objTuple):
@@ -31,9 +56,9 @@ def templateForObjectTuple(objTuple):
     if objTuple[0] == 'Paint':
         if all(not isinstance(o[1], tuple) or o[1][0] not in ('Paint', 'PaintColrLayers') for o in objTuple[1:]):
             # Leaf paint. Replace with variable.
-            return ('PaintArgument',)
+            return cachedtuple(('PaintArgument',))
 
-    return tuple(templateForObjectTuple(o) for o in objTuple)
+    return cachedtuple(templateForObjectTuple(o) for o in objTuple)
 
 
 def templateForObjectTuples(allTuples):
@@ -48,7 +73,7 @@ def templateForObjectTuples(allTuples):
             return None
         return v0
 
-    assert t0 == tuple
+    assert t0 == cachedtuple or t0 == tuple
     if all(v == v0 for v in allTuples):
         return v0
 
@@ -56,7 +81,7 @@ def templateForObjectTuples(allTuples):
     if any(len(v) != l0 for v in allTuples):
         return None
 
-    ret = tuple(templateForObjectTuples(l) for l in zip(*allTuples))
+    ret = cachedtuple(templateForObjectTuples(l) for l in zip(*allTuples))
     if ret is not None and None in ret:
         ret = None
 
@@ -64,7 +89,7 @@ def templateForObjectTuples(allTuples):
         return ret
 
     if v0[0] == 'Paint':
-        return ('PaintArgument',)
+        return cachedtuple(('PaintArgument',))
 
     return None
 
