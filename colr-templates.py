@@ -132,7 +132,8 @@ def serializeLayers(glyphList, layerList):
             layerListCache[layersTuple] = firstLayerIndex
             # Build cache entries for all sublists as well
             for i in range(0, len(layersTuple) - 1):
-                for j in range(i + 2, len(layersTuple) + 1):
+                # min() matches behavior of fontTools.colorLib.builder
+                for j in range(i + 2, min(len(layersTuple) + 1, i + 2 + 32)):
                     sliceTuple = layersTuple[i:j]
 
                     # The following slows things down and has no effect on the result
