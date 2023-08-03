@@ -131,7 +131,7 @@ def serializeLayers(glyphList, layerList):
             layersTuple = paint.layersTuple
             layerListCache[layersTuple] = firstLayerIndex
             # Build cache entries for all sublists as well
-            for i in range(0, len(layersTuple) - 2):
+            for i in range(0, len(layersTuple) - 1):
                 for j in range(i + 2, len(layersTuple) + 1):
                     sliceTuple = layersTuple[i:j]
 
