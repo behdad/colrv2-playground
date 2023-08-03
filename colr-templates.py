@@ -31,7 +31,7 @@ def templateForObjectTuple(objTuple):
     if objTuple[0] == 'Paint':
         if all(not isinstance(o[1], tuple) or o[1][0] not in ('Paint', 'PaintColrLayers') for o in objTuple[1:]):
             # Leaf paint. Replace with variable.
-            return ('PaintArgument',)
+            return ('PaintTemplateArgument',)
 
     return tuple(templateForObjectTuple(o) for o in objTuple)
 
@@ -64,12 +64,12 @@ def templateForObjectTuples(allTuples):
         return ret
 
     if v0[0] == 'Paint':
-        return ('PaintArgument',)
+        return ('PaintTemplateArgument',)
 
     return None
 
 def templateIsAllArguments(template):
-    if template[0] == 'PaintArgument':
+    if template[0] == 'PaintTemplateArgument':
         return True
     return (template[0] == 'PaintColrLayers' and
             all(templateIsAllArguments(o) for o in template[1:]))
@@ -162,35 +162,38 @@ for glyph in glyphList:
     paintTuple = objectToTuple(paint, layerList)
     paintTuples[glyphName] = paintTuple
 
-writer = OTTableWriter()
-colr.compile(writer, font)
-data = writer.getAllData()
-print("Original COLR table is", len(data), "bytes")
-print("Saving NotoColorEmoji-Regular-original.ttf")
-font.save("NotoColorEmoji-Regular-original.ttf")
+
+if False:
+    writer = OTTableWriter()
+    colr.compile(writer, font)
+    data = writer.getAllData()
+    print("Original COLR table is", len(data), "bytes")
+    print("Saving NotoColorEmoji-Regular-original.ttf")
+    font.save("NotoColorEmoji-Regular-original.ttf")
 
 
-print("Rebuilding original font.")
-colr2 = colr  # copy.deepcopy(colr)
-newGlyphList = colr2.BaseGlyphList.BaseGlyphPaintRecord
-for glyph in newGlyphList:
-    glyphName = glyph.BaseGlyph
-    glyph.Paint = serializeObjectTuple(paintTuples[glyphName])
+if False:
+    print("Rebuilding original font.")
+    colr2 = colr  # copy.deepcopy(colr)
+    newGlyphList = colr2.BaseGlyphList.BaseGlyphPaintRecord
+    for glyph in newGlyphList:
+        glyphName = glyph.BaseGlyph
+        glyph.Paint = serializeObjectTuple(paintTuples[glyphName])
 
-newLayerList = colr2.LayerList.Paint = []
-serializeLayers(glyphList, newLayerList)
+    newLayerList = colr2.LayerList.Paint = []
+    serializeLayers(glyphList, newLayerList)
 
-print(len(newGlyphList), "root paints")
-print(len(newLayerList), "layer paints")
+    print(len(newGlyphList), "root paints")
+    print(len(newLayerList), "layer paints")
 
-writer = OTTableWriter()
-colr2.compile(writer, font)
-data2 = writer.getAllData()
-print("Reconstructed COLR table is", len(data2), "bytes")
+    writer = OTTableWriter()
+    colr2.compile(writer, font)
+    data2 = writer.getAllData()
+    print("Reconstructed COLR table is", len(data2), "bytes")
 
-font["COLR"].table = colr2
-print("Saving NotoColorEmoji-Regular-reconstructed.ttf")
-font.save("NotoColorEmoji-Regular-reconstructed.ttf")
+    font["COLR"].table = colr2
+    print("Saving NotoColorEmoji-Regular-reconstructed.ttf")
+    font.save("NotoColorEmoji-Regular-reconstructed.ttf")
 
 
 
