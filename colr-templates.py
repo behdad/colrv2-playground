@@ -81,15 +81,15 @@ def serializeObjectTuple(objTuple, layerList, layerListCache):
     if objTuple[0] == 'PaintColrLayers':
         paint = Paint()
         paint.Format = 1  # PaintColrLayers
+        paint.NumLayers = len(objTuple) - 1
+
         cached = layerListCache.get(objTuple)
         if cached is not None:
             paint.FirstLayerIndex = cached
-            paint.NumLayers = len(objTuple) - 1
             return paint
 
         layers = [serializeObjectTuple(layer, layerList, layerListCache) for layer in objTuple[1:]]
         firstLayerIndex = paint.FirstLayerIndex = len(layerList)
-        paint.NumLayers = len(objTuple) - 1
         layerList.extend(layers)
 
         layerListCache[objTuple] = firstLayerIndex
