@@ -145,7 +145,7 @@ colr2 = colr  # copy.deepcopy(colr)
 newGlyphList = colr2.BaseGlyphList.BaseGlyphPaintRecord
 newLayerList = colr2.LayerList.Paint = []
 layerListCache = {}
-for glyph in newGlyphList:
+for glyph in sorted(newGlyphList, key=lambda g: len(paintTuples[g.BaseGlyph]), reverse=True):
     glyphName = glyph.BaseGlyph
     paint = serializeObjectTuple(paintTuples[glyphName], newLayerList, layerListCache)
     glyph.Paint = paint
