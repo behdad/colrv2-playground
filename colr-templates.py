@@ -85,10 +85,10 @@ def serializeObjectTuple(objTuple, layerList, layerListCache):
         if cached is not None:
             return copy.deepcopy(cached)
 
+        layers = [serializeObjectTuple(layer, layerList, layerListCache) for layer in objTuple[1:]]
         paint.FirstLayerIndex = len(layerList)
         paint.NumLayers = len(objTuple) - 1
-        for layer in objTuple[1:]:
-            layerList.append(serializeObjectTuple(layer, layerList, layerListCache))
+        layerList.extend(layers)
 
         layerListCache[objTuple] = paint
         return paint
@@ -122,10 +122,12 @@ writer = OTTableWriter()
 colr.compile(writer, font)
 data = writer.getAllData()
 print("Original COLR table is", len(data), "bytes")
+print("Saving NotoColorEmoji-Regular-original.ttf")
+font.save("NotoColorEmoji-Regular-original.ttf")
 
 
 print("Rebuilding original font.")
-colr2 = copy.deepcopy(colr)
+colr2 = colr  # copy.deepcopy(colr)
 newGlyphList = colr2.BaseGlyphList.BaseGlyphPaintRecord
 newLayerList = colr2.LayerList.Paint = []
 layerListCache = {}
@@ -140,6 +142,10 @@ writer = OTTableWriter()
 colr2.compile(writer, font)
 data2 = writer.getAllData()
 print("Reconstructed COLR table is", len(data2), "bytes")
+
+font["COLR"].table = colr2
+print("Saving NotoColorEmoji-Regular-reconstructed.ttf")
+font.save("NotoColorEmoji-Regular-reconstructed.ttf")
 
 
 
