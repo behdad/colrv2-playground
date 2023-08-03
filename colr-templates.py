@@ -166,8 +166,10 @@ def rebuildColr(font, paintTuples):
 
     writer = OTTableWriter()
     colr.compile(writer, font)
-    data2 = writer.getAllData()
-    print("Reconstructed COLR table is", len(data2), "bytes")
+    data = writer.getAllData()
+    l = len(data)
+    print("Reconstructed COLR table is", l, "bytes")
+    return l
 
 
 font = TTFont("NotoColorEmoji-Regular.ttf")
@@ -187,11 +189,13 @@ for glyph in glyphList:
     paintTuples[glyphName] = paintTuple
 
 
+originalSize = None
 if True:
     writer = OTTableWriter()
     colr.compile(writer, font)
     data = writer.getAllData()
-    print("Original COLR table is", len(data), "bytes")
+    originalSize = len(data)
+    print("Original COLR table is", originalSize, "bytes")
     #print("Saving NotoColorEmoji-Regular-original.ttf")
     #font.save("NotoColorEmoji-Regular-original.ttf")
 
@@ -233,8 +237,11 @@ for template, (templateGlyphs, arguments) in specializedTemplates.items():
                      )
         paintTuples[glyphName] = paintTuple
 
-print("Building templatized font.")
-rebuildColr(font, paintTuples)
+print("Building templatized font")
+templatizedSize = rebuildColr(font, paintTuples)
 
 print("Saving NotoColorEmoji-Regular-templatized.ttf")
 font.save("NotoColorEmoji-Regular-templatized.ttf")
+
+if originalSize is not None:
+    print("Templatized COLR table is %.3g%% smaller." % (100 * (1 - templatizedSize / originalSize)))
