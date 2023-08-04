@@ -144,40 +144,14 @@ def instantiateTemplate(template, arguments):
         (o[0], instantiateTemplate(o[1], arguments)) for o in template[1:]
     )
 
-def renumberArgumentIndex(obj, mapping):
-    if not isinstance(obj, tuple):
-        return obj
-    if obj[:2] == ("Paint", ("Format", PaintFormat.PaintTemplateArgument)):
-        if obj[2][1] == before:
-            return ("Paint", ("Format", PaintFormat.PaintTemplateArgument), ("ArgumentIndex", mapping[obj[2][1]]))
-        return obj
 
-    if obj[0] in ("list", "PaintColrLayers"):
-        return tuple(renumberArgumentIndex(o, mapping) for o in obj)
-
-    if obj[0] != "Paint":
-        return obj
-
-    return ("Paint",) + tuple(
-        (o[0], renumberArgumentIndex(o[1], mapping)) for o in obj[1:]
-    )
-
-
-def simplifySpecializedTemplate(template, oldArguments, classes, arguments):
+def splitSpecializedTemplate(template, arguments, classes, templateGlyphs, paintTuples):
     if not isinstance(template, tuple) or template[0] != "PaintColrLayers":
-        arguments.extend(oldArguments)
-        return template
-
-    classes = sorted(classes)
-    assert len(classes) < len(oldArguments), (classes, oldAarguments)
-    arguments = [None] * len(classes)
-    mapping = {frozenset(klass): idx for idx, klass in enumerate(classes)}
-
-    numGlyphs = len(oldArguments[0])
+        return templateGlyphs
 
     objTemplates = template[1:]
-    newObjTemplates = []
 
+    mapping = {frozenset(klass): idx for idx, klass in enumerate(classes)}
     slices = []
     indices = set()
     last = 0
@@ -186,113 +160,56 @@ def simplifySpecializedTemplate(template, oldArguments, classes, arguments):
         indices.update(objIndices)
         newArgIdx = mapping.get(frozenset(objIndices))
         if newArgIdx is not None:
-            slices.append(((last, i + 1), newArgIdx))
+            slices.append((last, i + 1))
             indices = set()
             last = i + 1
 
     if last < len(objTemplates):
-        arguments.extend(oldArguments)
-        return template
+        return templateGlyphs
 
-    newObjectTemplates = []
-    for (s0, s1), newArgIdx in slices:
-        if len(classes[newArgIdx]) == 1:
-            loneClass = next(iter(classes[newArgIdx))
-            argMapping = {loneClass: mapping[frozenset([loneClass])]}
-            for objTemplate in objTemplates[s0:s1]:
-                newObjTemplates.append(renumberArgumentIndex(objTemplate, argMapping))
-            if arguments[newArgIdx] is None:
-                arguments[newArgIdx] = list(oldArguments[loneClass])
-            continue
-
-        newObjTemplates.append(("Paint", ("Format", PaintFormat.PaintTemplateArgument), ("ArgumentIndex", newArgIdx))
-        if arguments[newArgIdx] is None:
-            arguments[newArgIdx] = [[], []]
-
-        for objTemplate in objTemplates[s0:s1]:
-            subArguments = []
-            for i in range(numGlyphs):
-                subArguments.append([])
-                subArguments.append(instantiateTemplate(objTemplate, [oldArgument[i] for oldArgument in oldArguments])
-
-                subTemplate = specializedTemplateForObjectTuples(subPaints, subArguments)
-
-
-                for klass in classes[newArgIdx]:
-                    subArguments[-1].append(oldArguments[klass][i])
-
-
-            subInstance = (
-                "Paint",
-                ("Format", PaintFormat.PaintTemplateInstance),
-                ("TemplatePaint", ("PaintColrLayers",)),
-                ("NumArguments", len(subArguments)),
-                ("Arguments", ("list",) + tuple(args[i] for args in subArguments)),
-            )
-
-
-
-
-
-        argMapping = {loneClass: mapping[frozenset([loneClass])]}
-
-            subPaints = []
-            for i in range(numGlyphs):
-                paint = ("PaintColrLayers",) + objTemplates[s0 : s1]
-                paint = instantiateTemplate(paint, [oldArgument[i] for oldArgument in oldArguments])
-                subPaints.append(paint)
-
-            subArguments = []
-            subTemplate = specializedTemplateForObjectTuples(subPaints, subArguments)
-
-
-        assert s1 - s0 > 0
+    glyphPaintTuples = defaultdict(list)
+    for s0, s1 in slices:
+        assert s0 < s1
         if s1 - s0 == 1:
-            mapping = {}
-            for i,argIdx in enumerate(indices):
-                mapping[argIdx] = len(arguments) + i
-
-            for idx in indices:
-                args = oldArguments[idx]
-                args = [renumberArgumentIndex(arg, mapping) for arg in args]
-                arguments.append(args)
-
-            newObjTemplates.append(objTemplates[s0])
-            continue
-
-        if len(indices) == 1:
-            mapping[indices[0]] = len(arguments)
-            args = oldArguments[indices[0]]
-            args = [renumberArgumentIndex(arg, mapping) for arg in args]
-            arguments.append(args)
+            template = objTemplates[s0]
         else:
-            subPaints = []
-            for i in range(numGlyphs):
-                paint = ("PaintColrLayers",) + objTemplates[s0 : s1]
-                paint = instantiateTemplate(paint, [oldArgument[i] for oldArgument in oldArguments])
-                subPaints.append(paint)
+            template = ("PaintColrLayers",) + objTemplates[s0:s1]
 
-            subArguments = []
-            subTemplate = specializedTemplateForObjectTuples(subPaints, subArguments)
+        instances = [
+            instantiateTemplate(template, [argument[i] for argument in arguments])
+            for i in range(len(templateGlyphs))
+        ]
 
-        newArgument = []
-        for i in range(numGlyphs):
-            subInstance = (
+        subArguments = []
+        subTemplate = specializedTemplateForObjectTuples(instances, subArguments)
+        for argument in subArguments:
+            assert len(argument) == len(templateGlyphs)
+
+        for i, glyphName in enumerate(templateGlyphs):
+            paintTuple = (
                 "Paint",
                 ("Format", PaintFormat.PaintTemplateInstance),
                 ("TemplatePaint", subTemplate),
-                ("NumArguments", len(subArguments)),
-                ("Arguments", ("list",) + tuple(args[i] for args in subArguments)),
+                (
+                    "ArgumentList",
+                    (
+                        "TemplateArgumentList",
+                        ("NumArguments", len(subArguments)),
+                        (
+                            "Arguments",
+                            ("list",) + tuple(args[i] for args in subArguments),
+                        ),
+                    ),
+                ),
             )
-            newArgument.append(subInstance)
+            glyphPaintTuples[glyphName].append(paintTuple)
 
-    index = len(arguments)
-    arguments.append(newArgument)
-    return (
-        "Paint",
-        ("Format", PaintFormat.PaintTemplateArgument),
-        ("ArgumentIndex", index),
-    )
+    for glyphName in templateGlyphs:
+        paintTuples[glyphName] = ("PaintColrLayers",) + tuple(
+            glyphPaintTuples[glyphName]
+        )
+
+    return []
 
 
 # TODO Move to fontTools
@@ -582,15 +499,12 @@ for template, templateGlyphs in genericTemplates.items():
     classes = classifier.getClasses()
     assert len(classes) <= len(arguments)
     if len(classes) != len(arguments):
-        newArguments = []
-        specializedTemplate = simplifySpecializedTemplate(
-            specializedTemplate, arguments, classes, newArguments
+        templateGlyphs = splitSpecializedTemplate(
+            specializedTemplate, arguments, classes, templateGlyphs, paintTuples
         )
-        arguments = newArguments
-        for argument in arguments:
-            assert len(argument) == len(templateGlyphs)
 
-    specializedTemplates[specializedTemplate] = (templateGlyphs, arguments)
+    if templateGlyphs:
+        specializedTemplates[specializedTemplate] = (templateGlyphs, arguments)
 # pprint([(len(v), v, k) for k,v in sorted(specializedTemplates.items(), key=lambda x: len(x[0][1]))])
 
 skipped = 0
