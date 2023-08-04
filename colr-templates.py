@@ -3,6 +3,7 @@ from fontTools.ttLib.tables.otBase import OTTableWriter
 from fontTools.ttLib.tables import otTables as ot
 from fontTools.ttLib.tables.otTables import Paint, PaintFormat
 from collections import defaultdict
+from functools import lru_cache
 from pprint import pprint
 import copy
 import sys
@@ -47,6 +48,14 @@ def templateForObjectTuple(objTuple):
     return tuple(templateForObjectTuple(o) for o in objTuple)
 
 
+def templateIsAllArguments(template):
+    if template[0] == "PaintTemplateArgument":
+        return True
+    return template[0] == "PaintColrLayers" and all(
+        templateIsAllArguments(o) for o in template[1:]
+    )
+
+
 def templateForObjectTuples(allTuples, arguments):
     assert isinstance(allTuples, (list, tuple))
     v0 = allTuples[0]
@@ -87,12 +96,118 @@ def templateForObjectTuples(allTuples, arguments):
     return None
 
 
-def templateIsAllArguments(template):
-    if template[0] == "PaintTemplateArgument":
-        return True
-    return template[0] == "PaintColrLayers" and all(
-        templateIsAllArguments(o) for o in template[1:]
-    )
+# TODO Move to fontTools
+PAINT_FORMAT_COST = {
+    PaintFormat.PaintColrLayers: 5,
+    PaintFormat.PaintSolid: 5,
+    PaintFormat.PaintVarSolid: 9,
+    PaintFormat.PaintLinearGradient: 16,
+    PaintFormat.PaintVarLinearGradient: 20,
+    PaintFormat.PaintRadialGradient: 16,
+    PaintFormat.PaintVarRadialGradient: 20,
+    PaintFormat.PaintSweepGradient: 12,
+    PaintFormat.PaintVarSweepGradient: 16,
+    PaintFormat.PaintGlyph: 6,
+    PaintFormat.PaintColrGlyph: 3,
+    PaintFormat.PaintTransform: 7,
+    PaintFormat.PaintVarTransform: 11,
+    PaintFormat.PaintTranslate: 8,
+    PaintFormat.PaintVarTranslate: 12,
+    PaintFormat.PaintScale: 8,
+    PaintFormat.PaintVarScale: 12,
+    PaintFormat.PaintScaleAroundCenter: 12,
+    PaintFormat.PaintVarScaleAroundCenter: 16,
+    PaintFormat.PaintScaleUniform: 6,
+    PaintFormat.PaintVarScaleUniform: 10,
+    PaintFormat.PaintScaleUniformAroundCenter: 10,
+    PaintFormat.PaintVarScaleUniformAroundCenter: 14,
+    PaintFormat.PaintRotate: 6,
+    PaintFormat.PaintVarRotate: 10,
+    PaintFormat.PaintRotateAroundCenter: 10,
+    PaintFormat.PaintVarRotateAroundCenter: 14,
+    PaintFormat.PaintSkew: 8,
+    PaintFormat.PaintVarSkew: 12,
+    PaintFormat.PaintSkewAroundCenter: 12,
+    PaintFormat.PaintVarSkewAroundCenter: 16,
+    PaintFormat.PaintComposite: 8,
+    PaintFormat.PaintTemplateInstance: lambda numArgs: 5 + 3 * numArgs,
+    PaintFormat.PaintTemplateArgument: 2,
+}
+
+
+def getSpecializedTemplateCost(template):
+    if not isinstance(template, tuple):
+        return 0, False
+    if template[0] == "list":
+        return 0, False
+    if template[:2] == ("Paint", ("Format", PaintFormat.PaintTemplateArgument)):
+        # Assume that PaintTemplateArguments are shared and insignificant as such.
+        return 0, True
+    if template[0] == "PaintColrLayers":
+        results = [getSpecializedTemplateCost(o) for o in template[1:]]
+        if not any(r[1] for r in results):
+            return 0, False
+
+        cost = sum(r[0] for r in results)
+        return (
+            PAINT_FORMAT_COST[PaintFormat.PaintColrLayers]
+            + 4 * (len(template) - 1)
+            + cost
+        ), True
+
+    results = [getSpecializedTemplateCost(o[1]) for o in template[1:]]
+    if not any(r[1] for r in results):
+        return 0, False
+
+    cost = sum(r[0] for r in results)
+
+    assert template[0] == "Paint"
+    for attr, value in template[1:]:
+        if attr == "Format":
+            cost += PAINT_FORMAT_COST[value]
+            break
+    else:
+        assert False, "PaintFormat not found in template"
+
+    return cost, True
+
+
+def getSpecializedNoTemplateCost(template, depth=0):
+    if not isinstance(template, tuple):
+        return 0, False
+    if template[0] == "list":
+        return 0, False
+    if template[:2] == ("Paint", ("Format", PaintFormat.PaintTemplateArgument)):
+        return 0, True
+    if template[0] == "PaintColrLayers":
+        results = [getSpecializedNoTemplateCost(o, depth + 1) for o in template[1:]]
+        if depth > 0:
+            # Assume the layers for this are shared from somewhere else.
+            return PAINT_FORMAT_COST[PaintFormat.PaintColrLayers], False
+        if not any(r[1] for r in results):
+            return 0, False
+        cost = sum(r[0] for r in results)
+        return (
+            PAINT_FORMAT_COST[PaintFormat.PaintColrLayers]
+            + 4 * (len(template) - 1)
+            + cost
+        ), True
+
+    results = [getSpecializedNoTemplateCost(o[1], depth + 1) for o in template[1:]]
+    if not any(r[1] for r in results):
+        return 0, False
+
+    cost = sum(r[0] for r in results)
+
+    assert template[0] == "Paint"
+    for attr, value in template[1:]:
+        if attr == "Format":
+            cost += PAINT_FORMAT_COST[value]
+            break
+    else:
+        assert False, "PaintFormat not found in template"
+
+    return cost, True
 
 
 def serializeObjectTuple(objTuple):
@@ -251,7 +366,31 @@ for template, templateGlyphs in genericTemplates.items():
     specializedTemplates[specializedTemplate] = (templateGlyphs, arguments)
 # pprint([(len(v), v, k) for k,v in sorted(specializedTemplates.items(), key=lambda x: len(x[0][1]))])
 
+skipped = 0
 for template, (templateGlyphs, arguments) in specializedTemplates.items():
+    if not arguments:
+        # Glyphs are identical. No need to templatize.
+        skipped += 1
+        continue
+
+    numGlyphs = len(templateGlyphs)
+    if numGlyphs == 2:
+        # Only templatize if the template is cheaper than the non-templatized version.
+        # We do this only for numGlyphs==2 because otherwise it's impractical to
+        # accurately estimate the cost of the non-templatized version.
+
+        templateCost, _ = getSpecializedTemplateCost(template)
+        noTemplateCost, _ = getSpecializedNoTemplateCost(template)
+        templatizationCost = (
+            PAINT_FORMAT_COST[PaintFormat.PaintTemplateInstance](len(arguments))
+            * numGlyphs
+            + templateCost
+        )
+        noTemplatizationCost = noTemplateCost * numGlyphs
+        if templatizationCost > noTemplatizationCost:
+            skipped += 1
+            continue
+
     for i, glyphName in enumerate(templateGlyphs):
         paintTuple = (
             "Paint",
@@ -261,6 +400,7 @@ for template, (templateGlyphs, arguments) in specializedTemplates.items():
             ("Arguments", ("list",) + tuple(args[i] for args in arguments)),
         )
         paintTuples[glyphName] = paintTuple
+print("Skipped", skipped, "templates as they didn't save space")
 
 print("Building templatized font")
 templatizedSize = rebuildColr(font, paintTuples)
