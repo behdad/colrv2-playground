@@ -3,9 +3,7 @@ from fontTools.ttLib.tables.otBase import OTTableWriter
 from fontTools.ttLib.tables import otTables as ot
 from fontTools.ttLib.tables.otTables import Paint, PaintFormat
 from collections import defaultdict
-from functools import lru_cache
 from pprint import pprint
-import copy
 import sys
 
 
