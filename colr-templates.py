@@ -396,14 +396,8 @@ for template, (templateGlyphs, arguments) in specializedTemplates.items():
             "Paint",
             ("Format", PaintFormat.PaintTemplateInstance),
             ("TemplatePaint", template),
-            (
-                "ArgumentList",
-                (
-                    "TemplateArgumentList",
-                    ("NumArguments", len(arguments)),
-                    ("Arguments", ("list",) + tuple(args[i] for args in arguments)),
-                ),
-            ),
+            ("NumArguments", len(arguments)),
+            ("Arguments", ("list",) + tuple(args[i] for args in arguments)),
         )
         paintTuples[glyphName] = paintTuple
 print("Skipped", skipped, "templates as they didn't save space")
