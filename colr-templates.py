@@ -2,8 +2,9 @@ from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables.otBase import OTTableWriter
 from fontTools.ttLib.tables import otTables as ot
 from fontTools.ttLib.tables.otTables import Paint, PaintFormat
+from fontTools.misc.classifyTools import Classifier
 from collections import defaultdict
-from functools import lru_cache
+from functools import reduce
 from pprint import pprint
 import copy
 import sys
@@ -56,7 +57,7 @@ def templateIsAllArguments(template):
     )
 
 
-def templateForObjectTuples(allTuples, arguments):
+def specializedTemplateForObjectTuples(allTuples, arguments):
     assert isinstance(allTuples, (list, tuple))
     v0 = allTuples[0]
     t0 = type(v0)
@@ -76,7 +77,9 @@ def templateForObjectTuples(allTuples, arguments):
     if any(len(v) != l0 for v in allTuples):
         return None
 
-    ret = tuple(templateForObjectTuples(l, arguments) for l in zip(*allTuples))
+    ret = tuple(
+        specializedTemplateForObjectTuples(l, arguments) for l in zip(*allTuples)
+    )
     if ret is not None and None in ret:
         ret = None
 
@@ -94,6 +97,126 @@ def templateForObjectTuples(allTuples, arguments):
         return paint
 
     return None
+
+
+def getAllArgumentIndices(template):
+    if not isinstance(template, tuple):
+        return set()
+    if template[0] == "list":
+        return set()
+
+    if template[:2] == ("Paint", ("Format", PaintFormat.PaintTemplateArgument)):
+        return {template[2][1]}
+
+    if template[0] == "PaintColrLayers":
+        return reduce(
+            lambda a, b: a | b,
+            (getAllArgumentIndices(o) for o in template[1:]),
+            set(),
+        )
+
+    if template[0] != "Paint":
+        return set()
+
+    return reduce(
+        lambda a, b: a | b,
+        (getAllArgumentIndices(o[1]) for o in template[1:]),
+        set(),
+    )
+
+
+def instantiateTemplate(template, arguments):
+    if not isinstance(template, tuple):
+        return template
+
+    if template[:2] == ("Paint", ("Format", PaintFormat.PaintTemplateArgument)):
+        return arguments[template[2][1]]
+
+    if template[0] == "PaintColrLayers":
+        return ("PaintColrLayers",) + tuple(
+            instantiateTemplate(o, arguments) for o in template[1:]
+        )
+
+    if template[0] != "Paint":
+        return template
+
+    return ("Paint",) + tuple(
+        (o[0], instantiateTemplate(o[1], arguments)) for o in template[1:]
+    )
+
+
+def partializeTemplate(template, oldArguments, arguments):
+
+    if not oldArguments:
+        return template
+
+    numGlyphs = len(oldArguments[0])
+
+    if template[0] == "Paint":
+
+        argument = [
+            instantiateTemplate(template, [oldArgument[g] for oldArgument in oldArguments])
+            for g in range(numGlyphs)
+        ]
+
+    elif template[0] == "PaintColrLayers":
+
+        objTemplates = template[1:]
+
+        argument = [
+            ("PaintColrLayers",)
+            + tuple(
+                instantiateTemplate(o, [oldArgument[g] for oldArgument in oldArguments])
+                for o in objTemplates
+            )
+            for g in range(numGlyphs)
+        ]
+    else:
+        assert(False), template[0]
+
+    index = len(arguments)
+    arguments.append(argument)
+    return (
+        "Paint",
+        ("Format", PaintFormat.PaintTemplateArgument),
+        ("ArgumentIndex", index),
+    )
+
+
+def simplifySpecializedTemplate(template, oldArguments, classes, arguments):
+    if not isinstance(template, tuple) or template[0] != "PaintColrLayers":
+        arguments.extend(oldArguments)
+        return template
+
+    objTemplates = template[1:]
+
+    slices = []
+    last = 0
+    indices = set()
+    for i, objTemplate in enumerate(objTemplates):
+        objIndices = getAllArgumentIndices(objTemplate)
+        indices.update(objIndices)
+        if indices in classes:
+            slices.append((last, i + 1))
+            last = i + 1
+            indices = set()
+
+    if last < len(objTemplates):
+        arguments.extend(oldArguments)
+        return template
+
+    template = ("PaintColrLayers",) + tuple(
+        partializeTemplate(
+            ("PaintColrLayers",) + objTemplates[s[0] : s[1]], oldArguments, arguments
+        ) if s[1] - s[0] > 1 else
+        partializeTemplate(objTemplates[s[0]], oldArguments, arguments)
+        for s in slices
+    )
+
+    if len(template) == 2:
+        template = template[1]
+
+    return template
 
 
 # TODO Move to fontTools
@@ -237,6 +360,11 @@ def serializeObjectTuple(objTuple):
 
 
 def collectPaintColrLayers(paint, allPaintColrLayers):
+    if isinstance(paint, list):
+        for value in paint:
+            collectPaintColrLayers(value, allPaintColrLayers)
+        return
+
     if not isinstance(paint, Paint):
         return
     if hasattr(paint, "layers"):
@@ -362,7 +490,30 @@ specializedTemplates = {}
 for template, templateGlyphs in genericTemplates.items():
     allTuples = [paintTuples[g] for g in templateGlyphs]
     arguments = []
-    specializedTemplate = templateForObjectTuples(allTuples, arguments)
+    specializedTemplate = specializedTemplateForObjectTuples(allTuples, arguments)
+    for argument in arguments:
+        assert len(argument) == len(templateGlyphs)
+
+    # Try specializing further by splitting into similar groups.
+
+    classifier = Classifier(sort=False)
+    for j, glyphName in enumerate(templateGlyphs):
+        groups = defaultdict(set)
+        for i, argument in enumerate(arguments):
+            groups[argument[j]].add(i)
+        classifier.update(groups.values())
+
+    classes = classifier.getClasses()
+    assert len(classes) <= len(arguments)
+    if len(classes) != len(arguments):
+        newArguments = []
+        specializedTemplate = simplifySpecializedTemplate(
+            specializedTemplate, arguments, classes, newArguments
+        )
+        arguments = newArguments
+        for argument in arguments:
+            assert len(argument) == len(templateGlyphs)
+
     specializedTemplates[specializedTemplate] = (templateGlyphs, arguments)
 # pprint([(len(v), v, k) for k,v in sorted(specializedTemplates.items(), key=lambda x: len(x[0][1]))])
 
