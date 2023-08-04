@@ -144,42 +144,22 @@ def instantiateTemplate(template, arguments):
         (o[0], instantiateTemplate(o[1], arguments)) for o in template[1:]
     )
 
+def renumberArgumentIndex(obj, mapping):
+    if not isinstance(obj, tuple):
+        return obj
+    if obj[:2] == ("Paint", ("Format", PaintFormat.PaintTemplateArgument)):
+        if obj[2][1] == before:
+            return ("Paint", ("Format", PaintFormat.PaintTemplateArgument), ("ArgumentIndex", mapping[obj[2][1]]))
+        return obj
 
-def partializeTemplate(template, oldArguments, arguments):
+    if obj[0] in ("list", "PaintColrLayers"):
+        return tuple(renumberArgumentIndex(o, mapping) for o in obj)
 
-    if not oldArguments:
-        return template
+    if obj[0] != "Paint":
+        return obj
 
-    numGlyphs = len(oldArguments[0])
-
-    if template[0] == "Paint":
-
-        argument = [
-            instantiateTemplate(template, [oldArgument[g] for oldArgument in oldArguments])
-            for g in range(numGlyphs)
-        ]
-
-    elif template[0] == "PaintColrLayers":
-
-        objTemplates = template[1:]
-
-        argument = [
-            ("PaintColrLayers",)
-            + tuple(
-                instantiateTemplate(o, [oldArgument[g] for oldArgument in oldArguments])
-                for o in objTemplates
-            )
-            for g in range(numGlyphs)
-        ]
-    else:
-        assert(False), template[0]
-
-    index = len(arguments)
-    arguments.append(argument)
-    return (
-        "Paint",
-        ("Format", PaintFormat.PaintTemplateArgument),
-        ("ArgumentIndex", index),
+    return ("Paint",) + tuple(
+        (o[0], renumberArgumentIndex(o[1], mapping)) for o in obj[1:]
     )
 
 
@@ -188,35 +168,68 @@ def simplifySpecializedTemplate(template, oldArguments, classes, arguments):
         arguments.extend(oldArguments)
         return template
 
+    numGlyphs = len(oldArguments[0])
+
     objTemplates = template[1:]
 
     slices = []
-    last = 0
     indices = set()
+    last = 0
     for i, objTemplate in enumerate(objTemplates):
         objIndices = getAllArgumentIndices(objTemplate)
         indices.update(objIndices)
         if indices in classes:
-            slices.append((last, i + 1))
-            last = i + 1
+            slices.append(((last, i + 1), indices))
             indices = set()
+            last = i + 1
 
     if last < len(objTemplates):
         arguments.extend(oldArguments)
         return template
 
-    template = ("PaintColrLayers",) + tuple(
-        partializeTemplate(
-            ("PaintColrLayers",) + objTemplates[s[0] : s[1]], oldArguments, arguments
-        ) if s[1] - s[0] > 1 else
-        partializeTemplate(objTemplates[s[0]], oldArguments, arguments)
-        for s in slices
+    newObjects = []
+    for (s0, s1), indices in slices:
+        indices = sorted(indices)
+
+        assert s1 - s0 > 0
+        if s1 - s0 == 1:
+            mapping = {}
+            for i,argIdx in enumerate(indices):
+                mapping[argIdx] = len(arguments) + i
+
+            for idx in indices:
+                args = oldArguments[idx]
+                args = [renumberArgumentIndex(arg, mapping) for arg in args]
+                arguments.append(args)
+            continue
+
+        subPaints = []
+        for i in range(numGlyphs):
+            paint = ("PaintColrLayers",) + objTemplates[s0 : s1]
+            paint = instantiateTemplate(paint, [oldArgument[i] for oldArgument in oldArguments])
+            subPaints.append(paint)
+
+        subArguments = []
+        subTemplate = specializedTemplateForObjectTuples(subPaints, subArguments)
+
+        newArgument = []
+        for i in range(numGlyphs):
+            subInstance = (
+                "Paint",
+                ("Format", PaintFormat.PaintTemplateInstance),
+                ("TemplatePaint", subTemplate),
+                ("NumArguments", len(subArguments)),
+                ("Arguments", ("list",) + tuple(args[i] for args in subArguments)),
+            )
+            newArgument.append(subInstance)
+
+    index = len(arguments)
+    arguments.append(newArgument)
+    return (
+        "Paint",
+        ("Format", PaintFormat.PaintTemplateArgument),
+        ("ArgumentIndex", index),
     )
-
-    if len(template) == 2:
-        template = template[1]
-
-    return template
 
 
 # TODO Move to fontTools
