@@ -1,4 +1,9 @@
-# Proposed COLRv2 templatizer
+# COLRv2 Playground
+
+This repo contains scripts used to assess various COLRv2 proposals.
+
+
+## Proposed COLRv2 templatizer
 
 This is in regards to the proposed COLRv2 paint-templates,
 as sketched [here](https://github.com/googlefonts/colr-gradients-spec/issues/371).
