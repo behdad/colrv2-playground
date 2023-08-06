@@ -215,7 +215,6 @@ def serializeObjectTuple(objTuple):
     if objTuple[0] == "PaintColrLayers":
         paint = Paint()
         paint.Format = PaintFormat.PaintColrLayers
-        paint.NumLayers = len(objTuple) - 1
 
         layersTuple = objTuple[1:]
 
@@ -258,6 +257,7 @@ def serializeLayers(glyphList, layerList):
 
     layerListCache = {}
     for paint in allPaintColrLayers:
+        paint.NumLayers = len(paint.layers)
         cached = layerListCache.get(paint.layersTuple)
         if cached is not None:
             paint.FirstLayerIndex = cached
